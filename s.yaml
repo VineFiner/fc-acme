@@ -41,7 +41,9 @@ vars:
       #   - serverAddr: xxx-xxx.cn-shenzhen.nas.aliyuncs.com
       #     nasDir: /fc-acme
       #     fcDir: /mnt/auto
+  functionName: "acme"
   environmentVariables:     # 为函数配置环境变量
+    PYTHONPATH: '/opt/python:/code' # 自定义层 flask
     Ali_Key: ${env(Ali_Key)}
     Ali_Secret: ${env(Ali_Secret)}
 
@@ -67,23 +69,55 @@ services:
     component: fc # 组件名称，Serverless Devs 工具本身类似于一种游戏机，不具备具体的业务能力，组件类似于游戏卡，用户通过向游戏机中插入不同的游戏卡实现不同的功能，即通过使用不同的组件实现不同的具体业务能力
     actions: # 自定义执行逻辑，关于actions 的使用，可以参考：https://www.serverless-devs.com/serverless-devs/yaml#行为描述
       post-deploy: # 在deploy之前运行
-        - component: fc invoke --service-name ${fc-nas-init.output.service.name}
-            --function-name nas-init
+        - component: fc invoke --service-name ${fc-nas-init.output.service.name} --function-name nas-init
     props: # 组件的属性值
       region: ${vars.region}
       service: ${vars.service}
       function:
-        name: "acme"
+        name: ${vars.functionName} # 函数名
         description: 'acme  Function'
+        layers:
+          - acs:fc:cn-hongkong:official:layers/Python3-Flask2x/versions/2
+        cAPort: 9000
         codeUri: './code/invoke-acme'
-        runtime: python3.9
+        runtime: custom.debian10
         handler: index.handler
+        customRuntimeConfig:
+          command:
+            - python3
+            - app.py
         timeout: 60
         memorySize: 256
         cpu: 0.25
         diskSize: 512
         instanceConcurrency: 5
         environmentVariables: ${vars.environmentVariables}  #  为函数配置环境变量
+      triggers:
+        - name: httpTrigger
+          type: http
+          config:
+            authType: anonymous
+            methods:
+              - GET
+              - POST
+  keep-warm: # 辅助函数, 2 min 定时预热
+    component: fc # 组件名称
+    # actions:
+    #   post-deploy:
+    #     - component: fc invoke --service-name ${fc-invoke-acme.output.service.name} --function-name nas-init
+    props: # 组件的属性值
+      region: ${vars.region}
+      service: ${vars.service}
+      function:
+        name: keep-warm
+        description: 'Serverless Devs Web Framework Helper Function'
+        codeUri: './code/keep-warm'
+        handler: index.handler
+        runtime: python3
+        timeout: 120
+        memorySize: 128
+        environmentVariables:
+          KEEP_WARM_URL: ${fc-invoke-acme.output.url.system_url}
       triggers:
         - name: timerTrigger
           type: timer
@@ -92,5 +126,5 @@ services:
             # 配置需要续签的域名
             payload: 'aaa.com'
             cronExpression: 'CRON_TZ=Asia/Shanghai 0 0 14 * * MON'
-            enable: false
+            enable: false # 是否定时触发, 默认不触发
 #END
